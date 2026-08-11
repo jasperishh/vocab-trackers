@@ -1,7 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <base target="_top">
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1197,7 +1196,7 @@
       --surface: rgba(248,248,248,.98);
       --surface-strong: rgba(250,250,250,.98);
       --surface-2: rgba(242,242,242,.96);
-      --text: #7c756f;
+      --text: #343434;
       --muted: #a8a19b;
       --line: #e6e4e1;
       --line-2: #efeeec;
@@ -2077,6 +2076,11 @@
       color: #343434 !important;
     }
 
+  
+    /* github build: requested typography */
+    :root { --text:#343434; }
+    body, h1, h2, h3, .brand, .brand b, .entry-word, .entry-meaning, .field label, .modal-title, .btn, .nav-btn { color:#343434; }
+
   </style>
 </head>
 <body>
@@ -2112,6 +2116,10 @@
       <button class="nav-btn" data-view="import" onclick="openBulkImport()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v12"/><path d="m8 11 4 4 4-4"/><path d="M5 20h14"/></svg>
         <span>bulk import</span>
+      </button>
+      <button class="nav-btn" type="button" onclick="openApiSettings()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.09A1.7 1.7 0 0 0 9 19.35a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3v-4h.09A1.7 1.7 0 0 0 4.65 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10.03 3H14v.09A1.7 1.7 0 0 0 15 4.65a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.56 1.03H21v4h-.09A1.7 1.7 0 0 0 19.4 15z"/></svg>
+        <span>api connection</span>
       </button>
     </nav>
 
@@ -2202,7 +2210,7 @@
     importMapping: {}
   };
 
-  document.addEventListener('DOMContentLoaded', loadData);
+  document.addEventListener('DOMContentLoaded', bootApp);
   document.addEventListener('click', (event) => {
     const sidebar = document.getElementById('sidebar');
     if (window.innerWidth <= 780 && sidebar.classList.contains('open') && !sidebar.contains(event.target) && !event.target.closest('.mobile-menu')) {
@@ -2210,13 +2218,146 @@
     }
   });
 
-  function serverCall(functionName, ...args) {
-    return new Promise((resolve, reject) => {
-      google.script.run
-        .withSuccessHandler(resolve)
-        .withFailureHandler(error => reject(new Error(error && error.message ? error.message : String(error))))
-        [functionName](...args);
-    });
+  const DEFAULT_API_URL = '';
+  const API_URL_STORAGE_KEY = 'vocabVibeApiUrl';
+
+  function getApiUrl() {
+    return String(localStorage.getItem(API_URL_STORAGE_KEY) || DEFAULT_API_URL || '').trim();
+  }
+
+  function normalizeApiUrl(url) {
+    return String(url || '').trim().replace(/\/+$/, '');
+  }
+
+  async function bootApp() {
+    const apiUrl = getApiUrl();
+    if (!apiUrl) {
+      setLoading(false);
+      renderApiSetup();
+      return;
+    }
+    await loadData();
+  }
+
+  async function serverCall(functionName, ...args) {
+    const apiUrl = getApiUrl();
+    if (!apiUrl) {
+      renderApiSetup();
+      throw new Error('apps script api url is not connected yet.');
+    }
+
+    let response;
+    try {
+      response = await fetch(apiUrl, {
+        method: 'POST',
+        mode: 'cors',
+        redirect: 'follow',
+        cache: 'no-store',
+        headers: {
+          // text/plain keeps this a simple cross-origin request and avoids an OPTIONS preflight.
+          'Content-Type': 'text/plain;charset=utf-8'
+        },
+        body: JSON.stringify({
+          action: functionName,
+          args: args
+        })
+      });
+    } catch (error) {
+      throw new Error('could not reach apps script. check the /exec url and deployment access.');
+    }
+
+    const raw = await response.text();
+    let result;
+
+    try {
+      result = JSON.parse(raw);
+    } catch (error) {
+      throw new Error('apps script returned a non-json response. make sure you are using the deployed /exec url, not /dev.');
+    }
+
+    if (!response.ok || !result.ok) {
+      throw new Error(result && result.error ? result.error : `request failed (${response.status})`);
+    }
+
+    return result.data;
+  }
+
+  function renderApiSetup(message = '') {
+    state.view = 'api';
+    document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
+    const saved = getApiUrl();
+
+    document.getElementById('content').innerHTML = `
+      <section class="page-head">
+        <div>
+          <div class="eyebrow">github ↔ apps script</div>
+          <h1>connect your sheet</h1>
+          <p class="page-subtitle">paste the apps script web app <strong>/exec</strong> url once. this github page will remember it in this browser.</p>
+        </div>
+      </section>
+
+      <section class="panel" style="max-width:820px; margin:0 auto;">
+        <div class="form-shell">
+          <section class="form-section" style="margin-bottom:0;">
+            ${sectionHead('1', 'apps script api', 'deploy code.gs as a web app first, then paste the deployed url below.')}
+            <div class="form-grid">
+              <div class="field col-12">
+                <label class="required">web app url</label>
+                <input id="apiUrlInput" type="url" value="${escapeAttr(saved)}" placeholder="https://script.google.com/macros/s/.../exec">
+                <div class="helper">use the url ending in <strong>/exec</strong>. do not use the apps script editor url.</div>
+              </div>
+            </div>
+
+            ${message ? `<div style="margin-top:14px; color:var(--danger); font-size:13px; line-height:1.5;">${escapeHtml(message)}</div>` : ''}
+
+            <div class="form-actions" style="margin-top:18px;">
+              ${saved ? `<button class="btn" type="button" onclick="disconnectApi()">forget url</button>` : ''}
+              <button class="btn primary" id="connectApiButton" type="button" onclick="saveAndTestApi()">connect & test</button>
+            </div>
+          </section>
+        </div>
+      </section>
+    `;
+  }
+
+  async function saveAndTestApi() {
+    const input = document.getElementById('apiUrlInput');
+    const button = document.getElementById('connectApiButton');
+    const url = normalizeApiUrl(input ? input.value : '');
+
+    if (!url || !/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec(?:\?.*)?$/i.test(url)) {
+      renderApiSetup('that does not look like an apps script /exec web app url.');
+      return;
+    }
+
+    localStorage.setItem(API_URL_STORAGE_KEY, url);
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'testing...';
+    }
+
+    try {
+      const test = await serverCall('ping');
+      if (!test || !test.connected) throw new Error('unexpected api response.');
+      toast('connected to google sheets ✨');
+      state.view = 'all';
+      await loadData();
+      setView('all');
+    } catch (error) {
+      renderApiSetup(error.message);
+    }
+  }
+
+  function disconnectApi() {
+    localStorage.removeItem(API_URL_STORAGE_KEY);
+    state.entries = [];
+    updateCounts();
+    renderApiSetup();
+  }
+
+  function openApiSettings() {
+    closeSidebar();
+    renderApiSetup();
   }
 
   async function loadData(showLoader = true) {
@@ -3117,14 +3258,7 @@
   }
 
   function showFatal(message) {
-    document.getElementById('content').innerHTML = `
-      <section class="panel" style="padding:28px; margin-top:24px;">
-        <div class="eyebrow">setup needed</div>
-        <h1 style="font-size:30px;">the app can't reach its google sheet yet.</h1>
-        <p class="page-subtitle" style="margin-bottom:16px;">${escapeHtml(message)}</p>
-        <p style="color:#555b66; line-height:1.6;">open the apps script editor and run <strong>setupVocabularyTracker()</strong> once, authorize it, then reload the web app.</p>
-      </section>
-    `;
+    renderApiSetup(message || 'the github page could not reach the apps script api.');
   }
 
   function truncate(text, max) {
